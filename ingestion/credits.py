@@ -1,11 +1,13 @@
 """Local credit budget controller.
 
 The API does not document a balance endpoint, so we keep a local ledger in the
-DB (api_usage) and protect the monthly budget locally.
+DB (api_usage), scoped PER CREDENTIAL (API key): each key has its own free
+allowance, so batches run with different keys must not share the spend counter.
 """
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 import logging
 
 from ingestion.config import Settings
@@ -14,15 +16,31 @@ from ingestion.db import Database
 log = logging.getLogger("strikerapi.credits")
 
 
+def credential_of(settings: Settings) -> str:
+    """Identificador NO reversible de la API key usada en esta tanda.
+
+    Preferimos ``STRIKER_CREDENTIAL_LABEL`` (p.ej. "tanda1") si está definido;
+    si no, un hash corto de la clave (nunca se guarda la clave en claro).
+    """
+    label = (settings.credential_label or "").strip()
+    if label:
+        return label
+    if not settings.api_key:
+        return "no-key"
+    return "key-" + hashlib.sha256(settings.api_key.encode()).hexdigest()[:10]
+
+
 class BudgetController:
     def __init__(self, settings: Settings, db: Database):
         self.s = settings
         self.db = db
         self.month = dt.date.today().strftime("%Y-%m")
+        self.credential = credential_of(settings)
 
     # ------------------------------------------------------------- queries
     def spent_this_month(self) -> int:
-        return self.db.month_spent(self.month)
+        """Gasto del mes SOLO para la credencial (clave) actual."""
+        return self.db.month_spent(self.month, self.credential)
 
     def reserve(self) -> int:
         return self.s.reserve_credits
@@ -58,12 +76,13 @@ class BudgetController:
 
     # ------------------------------------------------------------ spending
     def spend(self, tool: str, credits: int) -> None:
-        """Registrar gasto real. Marca intentos de sobrepasar la reserva."""
-        self.db.bump_usage(self.month, tool, credits)
+        """Registrar gasto real en la credencial actual."""
+        self.db.bump_usage(self.month, self.credential, tool, credits)
         if self.available() <= 0:
             log.warning(
-                "presupuesto efectivo agotado (gastado=%s, cap=%s, reserva=%s)",
-                self.spent_this_month(), self.effective_cap(), self.reserve())
+                "presupuesto efectivo agotado en credencial %s (gastado=%s, cap=%s, reserva=%s)",
+                self.credential, self.spent_this_month(), self.effective_cap(),
+                self.reserve())
 
     def preflight(self, tool: str, cost: int) -> bool:
         """¿Podemos ejecutar una llamada de este endpoint?"""

@@ -228,13 +228,16 @@ CREATE TABLE IF NOT EXISTS ingestion_checkpoints (
 );
 CREATE INDEX IF NOT EXISTS idx_cp_status ON ingestion_checkpoints (ingestion_status);
 
--- Consumo real de creditos por mes y tool (contabilidad local)
+-- Consumo real de creditos por mes, credencial y tool (contabilidad local).
+-- El gasto se cuenta POR CREDENCIAL (clave API): asi se pueden hacer tandas
+-- con claves distintas sin que una bloquee a la siguiente.
 CREATE TABLE IF NOT EXISTS api_usage (
     month      VARCHAR NOT NULL,                -- 'YYYY-MM'
+    credential VARCHAR NOT NULL,                -- etiqueta o hash de la API key
     tool       VARCHAR NOT NULL,
     credits    INTEGER NOT NULL,
     calls      INTEGER NOT NULL,
-    PRIMARY KEY (month, tool)
+    PRIMARY KEY (month, credential, tool)
 );
 
 -- Indice de respuestas crudas (los JSON se guardan EN DISCO en raw/)

@@ -37,6 +37,7 @@ def _mk_ingestor(db, fake):
     budget.s = s
     budget.db = db
     budget.month = "2026-10"
+    budget.credential = "test"
     return Ingestor(s, fake, db, budget)
 
 
@@ -87,3 +88,65 @@ def test_failed_with_max_attempts_skipped(db):
     # gA (attempts 0 < max) reintentado; gB (attempts 99 > max) omitido
     assert done == 1
     assert [p["game_id"] for (t, p) in fake.called] == ["gA"]
+
+class FailingClient(FakeClient):
+    def __init__(self, fail_402_for=(), fail_400_for=()):
+        super().__init__()
+        self.fail_402 = set(fail_402_for)
+        self.fail_400 = set(fail_400_for)
+
+    def call(self, tool, params, raw_dir=None, raw_key=None):
+        from ingestion.client import CreditsExhaustedError, InvalidRequestError
+        gid = params.get("game_id")
+        if gid in self.fail_402:
+            raise CreditsExhaustedError("Insufficient credits", 402, tool)
+        if gid in self.fail_400:
+            raise InvalidRequestError("bad request", 400, tool)
+        return super().call(tool, params, raw_dir, raw_key)
+
+
+def test_checkpoint_created_if_missing_and_402_keeps_pending(db):
+    """Un corte por presupuesto NO consume intento ni marca FAILED."""
+    from ingestion.credits import BudgetController
+    from ingestion.config import Settings
+    import pytest as _pytest
+
+    s = Settings(api_key="x", base_url="https://x", db_path=db.s.db_path,
+                 raw_dir=db.s.raw_dir, max_retries=2)
+    budget = BudgetController(s, db)
+    fake = FailingClient(fail_402_for=["g1"])
+    ing = Ingestor(s, fake, db, budget)
+
+    # BD sin checkpoints: process_games debe crearlos y luego detenerse en g1
+    games = [{"game_id": "g1", "season": 2025, "starts_at": "2025-09-02"},
+             {"game_id": "g2", "season": 2025, "starts_at": "2025-09-01"}]
+    with _pytest.raises(Exception):
+        ing.process_games(games, "laliga", mode="resume")
+
+    by = {r[2]: (r[4], r[5]) for r in db.checkpoints()}
+    # g1 (mas reciente, falla por 402) queda PENDING con 0 intentos
+    assert by["g1"] == ("PENDING", 0)
+    # g2 no se ha procesado pero existe su checkpoint
+    assert by["g2"][0] == "PENDING"
+
+
+def test_400_marks_failed_with_attempt():
+    from ingestion.credits import BudgetController
+    from ingestion.config import Settings
+    from ingestion.db import Database
+    import tempfile, pathlib
+
+    tmp = pathlib.Path(tempfile.mkdtemp())
+    s = Settings(api_key="x", base_url="https://x", db_path=tmp / "t.db",
+                 raw_dir=tmp / "raw", max_retries=2)
+    db = Database(s)
+    db.migrate()
+    budget = BudgetController(s, db)
+    fake = FailingClient(fail_400_for=["g9"])
+    ing = Ingestor(s, fake, db, budget)
+    ing.process_games([{"game_id": "g9", "season": 2025,
+                        "starts_at": "2025-09-01"}], "laliga", mode="resume")
+    row = db.fetchone(
+        "SELECT ingestion_status, attempts FROM ingestion_checkpoints WHERE game_id='g9'")
+    assert row[0] == "FAILED" and row[1] == 1
+    db.close()

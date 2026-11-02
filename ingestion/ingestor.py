@@ -79,6 +79,12 @@ class Ingestor:
             competition, (games[0] or {}).get("season") if games else None, mode)
         done = skipped = failed = 0
         ordered = sorted(games, key=lambda g: g.get("starts_at") or "", reverse=True)
+        # Garantiza checkpoints para TODOS los partidos del lote antes de
+        # empezar: si la tanda se corta por presupuesto, el estado queda
+        # completo (PENDING) y la siguiente tanda/clave sabe exactamente
+        # que falta sin recomprar nada.
+        for g in ordered:
+            self._ensure_checkpoint_row(g, competition)
         for g in ordered:
             if max_games and done >= max_games:
                 break
@@ -94,8 +100,12 @@ class Ingestor:
                 self._mark_completed(gid, competition)
                 done += 1
             except CreditsExhaustedError as e:
-                self._mark_failed(gid, competition, str(e))
-                log.error("402 -> detengo ingesta: %s", e)
+                # NO consumir un intento: devolver a PENDING para la proxima
+                # tanda/clave. El partido no se ha pagado (preflight/402).
+                self.db.execute(
+                    "UPDATE ingestion_checkpoints SET ingestion_status='PENDING'"
+                    " WHERE competition=? AND game_id=?", [competition, gid])
+                log.error("402/presupuesto -> detengo tanda: %s", e)
                 self.db.finish_job(job_id, status="aborted",
                                    games_done=done, games_failed=failed,
                                    games_skipped=skipped,
@@ -149,6 +159,33 @@ class Ingestor:
             self.db.upsert_rows(table, items)
 
     # ------------------------------------------------------------- checkpoint
+    def _ensure_checkpoint_row(self, game: dict, competition: str) -> None:
+        """Crea la fila de checkpoint PENDING si no existe (idempotente).
+
+        Imprescindible para el flujo por tandas con claves distintas: si un
+        partido no tiene checkpoint, ``_should_skip`` no puede verlo como
+        COMPLETED y se volveria a descargar (gastando creditos de nuevo).
+        """
+        gid = game.get("game_id")
+        if not gid:
+            return
+        row = self.db.fetchone(
+            "SELECT 1 FROM ingestion_checkpoints"
+            " WHERE competition=? AND game_id=?", [competition, gid])
+        if row is not None:
+            return
+        self.db.upsert_rows("ingestion_checkpoints", [{
+            "competition": competition,
+            "season": game.get("season"),
+            "game_id": gid,
+            "starts_at": game.get("starts_at"),
+            "ingestion_status": "PENDING",
+            "attempts": 0,
+            "last_attempt": None,
+            "completed_at": None,
+            "error_message": None,
+        }])
+
     def _ensure_pending(self, game: dict, competition: str, attempts=0) -> None:
         row = self.db.fetchone(
             "SELECT ingestion_status FROM ingestion_checkpoints "

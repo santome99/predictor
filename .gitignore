@@ -1,5 +1,11 @@
 # Environment / secrets
 .env
+.env.*
+api keys
+api*keys*
+*.key
+keys.txt
+secrets*
 
 # DuckDB + raw data (reconstruibles con créditos)
 curated/

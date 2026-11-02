@@ -63,13 +63,21 @@ def build_status(db: Database, competition: Optional[str] = None) -> dict:
         "games_with_open_close": _row(openclose),
         "avg_books_per_match": round(_row(avg_books), 2) if _row(avg_books) else 0.0,
         "checkpoints": by_status,
+        "pending_games": (by_status.get("PENDING", 0)
+                          + by_status.get("FAILED", 0)
+                          + by_status.get("RETRY_PENDING", 0)),
+        "pending_cost_estimate": (by_status.get("PENDING", 0)
+                                  + by_status.get("FAILED", 0)
+                                  + by_status.get("RETRY_PENDING", 0)) * 5,
         "tables": db.summary_table(),
     }
 
 
 def build_budget_report(db: Database, settings: Settings) -> dict:
+    from ingestion.credits import credential_of
     month = dt.date.today().strftime("%Y-%m")
-    spent = db.month_spent(month)
+    cred = credential_of(settings)
+    spent = db.month_spent(month, cred)
     caps = [settings.monthly_budget]
     if settings.credits_remaining > 0:
         caps.append(settings.credits_remaining)
@@ -77,6 +85,7 @@ def build_budget_report(db: Database, settings: Settings) -> dict:
     effective = max(0, total_cap - settings.reserve_credits)
     return {
         "month": month,
+        "credential": cred,
         "monthly_budget": settings.monthly_budget,
         "credits_remaining": settings.credits_remaining,
         "total_cap": total_cap,
@@ -102,6 +111,9 @@ def render_status(status: dict) -> str:
     ]
     for st in ("PENDING", "PROCESSING", "COMPLETED", "FAILED", "RETRY_PENDING"):
         lines.append(f"  {st:<14}: {status['checkpoints'].get(st, 0)}")
+    lines.append(f"Pending games         : {status.get('pending_games', 0)}")
+    lines.append(f"Pending cost estimate : ~{status.get('pending_cost_estimate', 0)} cr"
+                 " (5 cr/partido con get_game)")
     lines.append("Table row counts:")
     for k, v in status["tables"].items():
         lines.append(f"  {k:<22}: {v}")
@@ -111,6 +123,7 @@ def render_status(status: dict) -> str:
 def render_budget(b: dict) -> str:
     lines = [
         f"Month                 : {b['month']}",
+        f"Credential (tanda)    : {b.get('credential', '-')}",
         f"Monthly budget        : {b['monthly_budget']}",
         f"Credits remaining now : {b['credits_remaining'] or 'desconocido'}",
         f"Total cap (min budget,remaining): {b['total_cap']}",
@@ -118,8 +131,8 @@ def render_budget(b: dict) -> str:
         f"Effective cap         : {b['effective_cap']}",
         f"Spent this month      : {b['spent_this_month']}",
         f"Available (to reserve): {b['available']}",
-        "Usage by tool:",
+        "Usage by tool (month, credential, tool, credits, calls):",
     ]
-    for month, tool, credits, calls in b["usage_by_tool"]:
-        lines.append(f"  {month} {tool:<20}: {credits} cr / {calls} calls")
+    for month, cred, tool, credits, calls in b["usage_by_tool"]:
+        lines.append(f"  {month} {cred:<14} {tool:<18}: {credits} cr / {calls} calls")
     return "\n".join(lines)

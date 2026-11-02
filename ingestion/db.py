@@ -27,7 +27,33 @@ class Database:
     def migrate(self) -> None:
         sql = SCHEMA_FILE.read_text(encoding="utf-8")
         self.conn.execute(sql)
+        self._migrate_api_usage()
         self._seed_competition()
+
+    def _migrate_api_usage(self) -> None:
+        """Migra api_usage antiguo (PK month+tool) a PK month+credential+tool.
+
+        Necesario para contabilizar tandas hechas con claves API distintas.
+        Es idempotente: si la tabla ya tiene 'credential', no hace nada.
+        """
+        try:
+            cols = [r[1] for r in self.conn.execute(
+                "PRAGMA table_info('api_usage')").fetchall()]
+        except Exception:
+            return
+        if not cols or "credential" in cols:
+            return
+        self.conn.execute("ALTER TABLE api_usage RENAME TO api_usage_old")
+        self.conn.execute(
+            "CREATE TABLE api_usage ("
+            " month VARCHAR NOT NULL, credential VARCHAR NOT NULL,"
+            " tool VARCHAR NOT NULL, credits INTEGER NOT NULL,"
+            " calls INTEGER NOT NULL, PRIMARY KEY (month, credential, tool))")
+        self.conn.execute(
+            "INSERT INTO api_usage (month, credential, tool, credits, calls)"
+            " SELECT month, 'legacy', tool, credits, calls FROM api_usage_old")
+        self.conn.execute("DROP TABLE api_usage_old")
+        log.info("api_usage migrada a contabilidad por credencial")
 
     def close(self) -> None:
         try:
@@ -91,26 +117,37 @@ class Database:
         return row[0] if row else None
 
     # ----------------------------------------------------------- usage ledger
-    def bump_usage(self, month: str, tool: str, credits: int) -> None:
+    def bump_usage(self, month: str, credential: str, tool: str,
+                   credits: int) -> None:
         cur = self.fetchone(
-            "SELECT credits, calls FROM api_usage WHERE month=? AND tool=?",
-            [month, tool])
+            "SELECT credits, calls FROM api_usage"
+            " WHERE month=? AND credential=? AND tool=?",
+            [month, credential, tool])
         if cur:
             self.execute(
-                "UPDATE api_usage SET credits=credits+?, calls=calls+1 WHERE month=? AND tool=?",
-                [credits, month, tool])
+                "UPDATE api_usage SET credits=credits+?, calls=calls+1"
+                " WHERE month=? AND credential=? AND tool=?",
+                [credits, month, credential, tool])
         else:
-            self.upsert_rows("api_usage", [{"month": month, "tool": tool,
-                                            "credits": credits, "calls": 1}])
+            self.upsert_rows("api_usage", [{
+                "month": month, "credential": credential, "tool": tool,
+                "credits": credits, "calls": 1}])
 
-    def month_spent(self, month: str) -> int:
-        row = self.fetchone("SELECT COALESCE(SUM(credits),0) FROM api_usage WHERE month=?",
-                            [month])
+    def month_spent(self, month: str, credential: Optional[str] = None) -> int:
+        if credential is None:
+            row = self.fetchone(
+                "SELECT COALESCE(SUM(credits),0) FROM api_usage WHERE month=?",
+                [month])
+        else:
+            row = self.fetchone(
+                "SELECT COALESCE(SUM(credits),0) FROM api_usage"
+                " WHERE month=? AND credential=?", [month, credential])
         return int(row[0]) if row else 0
 
     def all_usage(self) -> list:
         return self.fetchall(
-            "SELECT month, tool, credits, calls FROM api_usage ORDER BY month, tool")
+            "SELECT month, credential, tool, credits, calls FROM api_usage"
+            " ORDER BY month, credential, tool")
 
     # ------------------------------------------------------------ checkpoints
     def upsert_checkpoint(self, row: dict) -> None:

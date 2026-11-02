@@ -13,10 +13,10 @@ class FakeDB:
     def __init__(self, spent=0):
         self.spent = spent
 
-    def month_spent(self, month):
+    def month_spent(self, month, credential=None):
         return self.spent
 
-    def bump_usage(self, month, tool, credits):
+    def bump_usage(self, month, credential, tool, credits):
         self.spent += credits
 
     def all_usage(self):
@@ -79,3 +79,41 @@ def test_throttle_rate_unknown_balance_stays_fast():
     c.local_spent = 5000                       # irrelevante si no hay saldo
     assert c.remaining_credits() is None
     assert c._rate_per_minute() == 60
+
+def test_usage_is_isolated_per_credential(tmp_path):
+    """Tandas con claves distintas no comparten contador de gasto."""
+    from ingestion.db import Database
+
+    s = _settings(api_key="claveA", credential_label="tanda1",
+                  credits_remaining=500, reserve_credits=50,
+                  db_path=tmp_path / "t.db", raw_dir=tmp_path / "raw")
+    db = Database(s)
+    db.migrate()
+
+    from ingestion.credits import BudgetController
+    bA = BudgetController(s, db)
+    assert bA.credential == "tanda1"
+    assert bA.available() == 450
+    for _ in range(20):                  # 20 x get_game = 100 cr
+        bA.spend("get_game", 5)
+    assert bA.spent_this_month() == 100 and bA.available() == 350
+
+    # nueva clave -> contador propio desde 0
+    s2 = _settings(api_key="claveB", credential_label="tanda2",
+                   credits_remaining=500, reserve_credits=50,
+                   db_path=tmp_path / "t.db", raw_dir=tmp_path / "raw")
+    bB = BudgetController(s2, db)
+    assert bB.credential == "tanda2"
+    assert bB.spent_this_month() == 0
+    assert bB.available() == 450
+
+    # el gasto total (todas las credenciales) si se puede ver
+    assert db.month_spent(bA.month) == 100
+    db.close()
+
+
+def test_credential_label_falls_back_to_key_hash():
+    from ingestion.credits import credential_of
+    s = _settings(api_key="supersecreta", credential_label="")
+    c = credential_of(s)
+    assert c.startswith("key-") and "supersecreta" not in c

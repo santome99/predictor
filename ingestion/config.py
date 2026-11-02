@@ -26,6 +26,9 @@ class Settings:
     # tope de gasto y el frenado por rate-limit usan este valor en vez del
     # presupuesto mensual: con 498 creditos no tiene sentido planificar 10.000.
     credits_remaining: int = 0
+    # Etiqueta humana para la credencial (tanda) actual; si vacio se usa un
+    # hash corto de la API key. Sirve para separar la contabilidad por clave.
+    credential_label: str = ""
     rate_per_minute: int = 60          # 60 req/min cuando saldo >= 100 creditos
     low_balance_rate_per_minute: int = 10
     low_balance_threshold: int = 100
@@ -77,6 +80,7 @@ def load_settings() -> Settings:
         monthly_budget=int(os.getenv("STRIKER_MONTHLY_BUDGET", "10000")),
         reserve_credits=int(os.getenv("STRIKER_RESERVE_CREDITS", "500")),
         credits_remaining=int(os.getenv("STRIKER_CREDITS_REMAINING", "0") or "0"),
+        credential_label=os.getenv("STRIKER_CREDENTIAL_LABEL", "").strip(),
         rate_per_minute=int(os.getenv("STRIKER_RATE_PER_MINUTE", "60")),
         low_balance_rate_per_minute=int(os.getenv("STRIKER_LOW_BALANCE_RATE", "10")),
         low_balance_threshold=int(os.getenv("STRIKER_LOW_BALANCE_THRESHOLD", "100")),

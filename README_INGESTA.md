@@ -12,6 +12,11 @@ backtests de valor (EV+).
    walk-forward backtest y predicciones para próximos fixtures.
    Decisiones de diseño razonadas: `DECISIONES_FEATURES.md`.
 
+**Guías de despliegue:**
+- `GUIA_DESPLIEGUE.md` — de cero a dataset, con la **ingesta por tandas de ~500
+  créditos y claves API distintas** (procedimiento, costes, control y reanudación).
+- `HOMELAB.md` — referencia rápida de la LXC (tamaños, cron, backup).
+
 **Alcance inicial (FASE 1ª):** `list_games` + `get_game` + `get_ratings`.
 Los endpoints `get_events`, `get_shot_map`, `get_lineups`, `get_player*`,
 `get_player_props`, `get_prop_history`, `get_line_movement` **NO se utilizan en
