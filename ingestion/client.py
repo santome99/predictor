@@ -73,13 +73,30 @@ class StrikerClient:
         self._session = session  # type: ignore[assignment]
 
     # ------------------------------------------------------------------ rate
+    def remaining_credits(self) -> Optional[int]:
+        """Saldo estimado: saldo inicial informado menos lo gastado en sesion.
+
+        Si ``STRIKER_CREDITS_REMAINING`` no se informa (0), devolvemos None y
+        asumimos que estamos por encima del umbral (rapido).
+        """
+        if self.s.credits_remaining > 0:
+            return max(0, self.s.credits_remaining - self.local_spent)
+        return None
+
+    def _rate_per_minute(self) -> int:
+        """60 req/min mientras queden >= 100 creditos; 10 req/min por debajo.
+
+        La decision se toma sobre el saldo RESTANTE, no sobre lo ya gastado:
+        confundirlos frenaba injustamente sesiones largas con saldo de sobra.
+        """
+        rem = self.remaining_credits()
+        if rem is not None and rem < self.s.low_balance_threshold:
+            return self.s.low_balance_rate_per_minute
+        return self.s.rate_per_minute
+
     def _throttle(self) -> None:
-        """Respect documented 60 req/min (>=100 credits) or 10 req/min (<100)."""
-        rate = self.s.rate_per_minute
-        if self.local_spent >= self.s.low_balance_threshold:
-            # ``local_spent`` declarado por precaucion: bajo saldo => lento.
-            rate = self.s.low_balance_rate_per_minute
-        min_interval = 60.0 / rate
+        """Respeta el rate limit documentado (60/10 req por minuto)."""
+        min_interval = 60.0 / self._rate_per_minute()
         with self._lock:
             now = time.monotonic()
             wait = min_interval - (now - self._last_request_at)

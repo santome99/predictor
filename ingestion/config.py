@@ -22,6 +22,10 @@ class Settings:
     raw_dir: Path = ROOT / "raw"
     monthly_budget: int = 10_000
     reserve_credits: int = 500
+    # Saldo REAL disponible ahora mismo (0 = desconocido). Si se informa, el
+    # tope de gasto y el frenado por rate-limit usan este valor en vez del
+    # presupuesto mensual: con 498 creditos no tiene sentido planificar 10.000.
+    credits_remaining: int = 0
     rate_per_minute: int = 60          # 60 req/min cuando saldo >= 100 creditos
     low_balance_rate_per_minute: int = 10
     low_balance_threshold: int = 100
@@ -72,6 +76,7 @@ def load_settings() -> Settings:
         raw_dir=raw,
         monthly_budget=int(os.getenv("STRIKER_MONTHLY_BUDGET", "10000")),
         reserve_credits=int(os.getenv("STRIKER_RESERVE_CREDITS", "500")),
+        credits_remaining=int(os.getenv("STRIKER_CREDITS_REMAINING", "0") or "0"),
         rate_per_minute=int(os.getenv("STRIKER_RATE_PER_MINUTE", "60")),
         low_balance_rate_per_minute=int(os.getenv("STRIKER_LOW_BALANCE_RATE", "10")),
         low_balance_threshold=int(os.getenv("STRIKER_LOW_BALANCE_THRESHOLD", "100")),

@@ -70,13 +70,20 @@ def build_status(db: Database, competition: Optional[str] = None) -> dict:
 def build_budget_report(db: Database, settings: Settings) -> dict:
     month = dt.date.today().strftime("%Y-%m")
     spent = db.month_spent(month)
+    caps = [settings.monthly_budget]
+    if settings.credits_remaining > 0:
+        caps.append(settings.credits_remaining)
+    total_cap = min(caps)
+    effective = max(0, total_cap - settings.reserve_credits)
     return {
         "month": month,
         "monthly_budget": settings.monthly_budget,
+        "credits_remaining": settings.credits_remaining,
+        "total_cap": total_cap,
         "reserve_credits": settings.reserve_credits,
-        "effective_cap": max(0, settings.monthly_budget - settings.reserve_credits),
+        "effective_cap": effective,
         "spent_this_month": spent,
-        "available": max(0, settings.monthly_budget - settings.reserve_credits - spent),
+        "available": max(0, effective - spent),
         "usage_by_tool": db.all_usage(),
     }
 
@@ -105,6 +112,8 @@ def render_budget(b: dict) -> str:
     lines = [
         f"Month                 : {b['month']}",
         f"Monthly budget        : {b['monthly_budget']}",
+        f"Credits remaining now : {b['credits_remaining'] or 'desconocido'}",
+        f"Total cap (min budget,remaining): {b['total_cap']}",
         f"Reserve credits       : {b['reserve_credits']}",
         f"Effective cap         : {b['effective_cap']}",
         f"Spent this month      : {b['spent_this_month']}",

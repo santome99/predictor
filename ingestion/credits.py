@@ -30,9 +30,21 @@ class BudgetController:
     def monthly_budget(self) -> int:
         return self.s.monthly_budget
 
+    def total_cap(self) -> int:
+        """Tope bruto de gasto del mes.
+
+        Si se conoce el saldo real (``STRIKER_CREDITS_REMAINING``), el tope es
+        el MENOR entre presupuesto mensual y saldo real: con 498 creditos no
+        podemos planificar 10.000. Si no se informa, se usa el presupuesto.
+        """
+        caps = [self.s.monthly_budget]
+        if self.s.credits_remaining > 0:
+            caps.append(self.s.credits_remaining)
+        return min(caps)
+
     def effective_cap(self) -> int:
-        """Máximo gastable = presupuesto - reserva (nunca tocar la reserva)."""
-        return max(0, self.s.monthly_budget - self.s.reserve_credits)
+        """Máximo gastable = tope - reserva (nunca tocar la reserva)."""
+        return max(0, self.total_cap() - self.s.reserve_credits)
 
     def available(self) -> int:
         return max(0, self.effective_cap() - self.spent_this_month())
@@ -41,8 +53,8 @@ class BudgetController:
         return cost <= self.available()
 
     def estimate_remaining(self) -> int:
-        # Estimacion: presupuesto bruto menos lo gastado; reserva notificada aparte.
-        return max(0, self.s.monthly_budget - self.spent_this_month())
+        # Estimacion: tope bruto menos lo gastado; reserva notificada aparte.
+        return max(0, self.total_cap() - self.spent_this_month())
 
     # ------------------------------------------------------------ spending
     def spend(self, tool: str, credits: int) -> None:
