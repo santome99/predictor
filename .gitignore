@@ -1,0 +1,18 @@
+# Environment / secrets
+.env
+
+# DuckDB + raw data (reconstruibles con créditos)
+curated/
+raw/
+
+# Artefactos de features (matrices, modelos, demo)
+artifacts/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+
+# Local overrides
+*.local.env
